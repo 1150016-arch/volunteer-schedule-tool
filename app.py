@@ -29,7 +29,6 @@ with col2:
 def load_clean_b(file):
     """讀取表格 B 並自動處理標題在第二列的問題"""
     df = pd.read_excel(file)
-    # 若第一列是報名表大標題，將第二列設為欄位標題
     if '義工編號' not in df.columns and '編號' not in df.columns:
         if len(df) > 0 and any(df.iloc[0].astype(str).str.contains('義工編號|編號|姓名')):
             df.columns = df.iloc[0]
@@ -74,36 +73,28 @@ def process_schedule(df_a, df_b):
         df_abnormal = df_b_cleaned[df_b_cleaned['發心起始時間'].isna()]
         df_b_cleaned = pd.concat([df_normal, df_abnormal], ignore_index=True)
 
-    # 7. 產生五個符合需求的 Sheet 工作表
+    # 7. 建立「館員用」公式連動 Dataframe
+    df_staff = pd.DataFrame(columns=df_b_cleaned.columns)
+    
+    # 填入 Excel 連動公式：例如 ='1021'!A2，代表自動連動日期 Sheet 的該儲存格
+    for row_idx in range(len(df_b_cleaned)):
+        row_formulas = []
+        excel_row_num = row_idx + 2  # Excel 標題是第 1 列，資料從第 2 列開始
+        for col_idx in range(len(df_b_cleaned.columns)):
+            # 轉換欄位英文字母（例如 1 -> A, 2 -> B）
+            col_letter = pd.io.formats.excel.get_column_letter(col_idx + 1)
+            formula = f"='{target_date}'!{col_letter}{excel_row_num}"
+            row_formulas.append(formula)
+        df_staff.loc[row_idx] = row_formulas
+
+    # 8. 輸出 Excel 檔
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Sheet 1: 日期 Sheet
+        # Sheet 1: 排班日期 Sheet（靜態初始資料，供手動修改）
         df_b_cleaned.to_excel(writer, sheet_name=target_date, index=False)
-        
-        # Sheet 2: 貼後上傳守護網用
-        cols_guardian = [b_id_col, '姓名', '法名', '性別', '館', '任']
-        guardian_cols_exist = [c for c in cols_guardian if c in df_b_cleaned.columns]
-        df_guardian = df_b_cleaned[guardian_cols_exist].copy()
-        if '館' in df_guardian.columns:
-            df_guardian.rename(columns={'館': '地點'}, inplace=True)
-        df_guardian.to_excel(writer, sheet_name="貼後上傳守護網用", index=False)
 
-        # Sheet 3: 用齋用
-        cols_meal = [b_id_col, '精舍', '姓名', '法名', '館', '哨']
-        meal_cols_exist = [c for c in cols_meal if c in df_b_cleaned.columns]
-        df_meal = df_b_cleaned[meal_cols_exist].copy()
-        df_meal['午齋'] = 1
-        df_meal.to_excel(writer, sheet_name="用齋用", index=False)
-
-        # Sheet 4: 館員用
-        df_b_cleaned.to_excel(writer, sheet_name="館員用", index=False)
-
-        # Sheet 5: 分館上哨白板組長用
-        if '館' in df_b_cleaned.columns:
-            df_sub = df_b_cleaned[df_b_cleaned['館'] == '分館']
-        else:
-            df_sub = df_b_cleaned
-        df_sub.to_excel(writer, sheet_name="分館上哨白板組長用", index=False)
+        # Sheet 2: 館員用 Sheet（帶入動態連動公式）
+        df_staff.to_excel(writer, sheet_name="館員用", index=False)
 
     output.seek(0)
     return output
