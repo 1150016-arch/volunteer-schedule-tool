@@ -48,13 +48,14 @@ def process_schedule(df_a, df_b):
     a_id_col = '編號' if '編號' in df_a.columns else ('義工編號' if '義工編號' in df_a.columns else df_a.columns[1])
     b_id_col = '義工編號' if '義工編號' in df_b_cleaned.columns else ('編號' if '編號' in df_b_cleaned.columns else df_b_cleaned.columns[0])
 
-    # VLOOKUP 匯入 <A> 資料
-    a_indexed = df_a.set_index(a_id_col)
+    # 關鍵修正：剔除表格 A 中的空白列與重複編號
+df_a_clean = df_a.dropna(subset=[a_id_col])
+df_a_unique = df_a_clean.drop_duplicates(subset=[a_id_col]).set_index(a_id_col)
     
-    df_b_cleaned['館'] = df_b_cleaned[b_id_col].map(a_indexed['館別']) if '館別' in a_indexed.columns else ''
-    df_b_cleaned['哨'] = df_b_cleaned[b_id_col].map(a_indexed['哨別']) if '哨別' in a_indexed.columns else ''
-    df_b_cleaned['任'] = df_b_cleaned[b_id_col].map(a_indexed['任務']) if '任務' in a_indexed.columns else ''
-    df_b_cleaned['特展'] = df_b_cleaned[b_id_col].map(a_indexed['特展定導']) if '特展定導' in a_indexed.columns else ''
+    df_b_cleaned['館'] = df_b_cleaned[b_id_col].map(df_a_unique['館別']) if '館別' in df_a_unique.columns else ''
+    df_b_cleaned['哨'] = df_b_cleaned[b_id_col].map(df_a_unique['哨別']) if '哨別' in df_a_unique.columns else ''
+    df_b_cleaned['任'] = df_b_cleaned[b_id_col].map(df_a_unique['任務']) if '任務' in df_a_unique.columns else ''
+    df_b_cleaned['特展'] = df_b_cleaned[b_id_col].map(df_a_unique['特展定導']) if '特展定導' in df_a_unique.columns else ''
 
     # 3. 調整欄位順序：在精舍後加入 館、哨、任、特
     base_cols = list(df_b_cleaned.columns)
