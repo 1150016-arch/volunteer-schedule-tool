@@ -13,7 +13,7 @@ st.markdown("將 **表格 A（雲端預排檔）** 與 **表格 B（登記發心
 
 # 側邊欄設定
 st.sidebar.header("⚙️ 參數設定")
-target_date = st.sidebar.text_input("排班日期 / Sheet 名稱", value="1020", help="例如 1020，需對應表格 A 中的工作表名稱")
+target_date = st.sidebar.text_input("排班日期 / Sheet 名稱", value="1021", help="例如 1021，需對應表格 A 中的工作表名稱")
 
 # 檔案上傳區
 col1, col2 = st.columns(2)
@@ -34,13 +34,18 @@ def process_schedule(df_a, df_b):
     ]
     df_b_cleaned = df_b.drop(columns=[c for c in drop_cols if c in df_b.columns])
 
-    # 2. VLOOKUP 匯入 <A> 資料（以義工編號為 Key）
-    a_indexed = df_a.set_index('編號')
+    # 2. 自動判斷欄位名稱 (相容 '編號' 與 '義工編號')
+    a_id_col = '編號' if '編號' in df_a.columns else ('義工編號' if '義工編號' in df_a.columns else df_a.columns[1])
+    b_id_col = '義工編號' if '義工編號' in df_b_cleaned.columns else ('編號' if '編號' in df_b_cleaned.columns else df_b_cleaned.columns[0])
+
+    # VLOOKUP 匯入 <A> 資料
+    a_indexed = df_a.set_index(a_id_col)
     
-    df_b_cleaned['館'] = df_b_cleaned['義工編號'].map(a_indexed['館別'])
-    df_b_cleaned['哨'] = df_b_cleaned['義工編號'].map(a_indexed['哨別'])
-    df_b_cleaned['任'] = df_b_cleaned['義工編號'].map(a_indexed['任務'])
-    df_b_cleaned['特展'] = df_b_cleaned['義工編號'].map(a_indexed['特展定導'])
+    # 欄位對應（防呆檢查）
+    df_b_cleaned['館'] = df_b_cleaned[b_id_col].map(a_indexed['館別']) if '館別' in a_indexed.columns else ''
+    df_b_cleaned['哨'] = df_b_cleaned[b_id_col].map(a_indexed['哨別']) if '哨別' in a_indexed.columns else ''
+    df_b_cleaned['任'] = df_b_cleaned[b_id_col].map(a_indexed['任務']) if '任務' in a_indexed.columns else ''
+    df_b_cleaned['特展'] = df_b_cleaned[b_id_col].map(a_indexed['特展定導']) if '特展定導' in a_indexed.columns else ''
 
     # 3. 調整欄位順序：在精舍後加入 館、哨、任、特
     base_cols = list(df_b_cleaned.columns)
@@ -63,13 +68,14 @@ def process_schedule(df_a, df_b):
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_b_cleaned.to_excel(writer, sheet_name=target_date, index=False)
         
-        cols_guardian = ['義工編號', '姓名', '法名', '性別', '館', '任']
+        cols_guardian = [b_id_col, '姓名', '法名', '性別', '館', '任']
         guardian_cols_exist = [c for c in cols_guardian if c in df_b_cleaned.columns]
         df_guardian = df_b_cleaned[guardian_cols_exist].copy()
-        df_guardian.rename(columns={'館': '地點'}, inplace=True)
+        if '館' in df_guardian.columns:
+            df_guardian.rename(columns={'館': '地點'}, inplace=True)
         df_guardian.to_excel(writer, sheet_name="貼後上傳守護網用", index=False)
 
-        cols_meal = ['義工編號', '精舍', '姓名', '法名', '館', '哨']
+        cols_meal = [b_id_col, '精舍', '姓名', '法名', '館', '哨']
         meal_cols_exist = [c for c in cols_meal if c in df_b_cleaned.columns]
         df_meal = df_b_cleaned[meal_cols_exist].copy()
         df_meal['午齋'] = 1
