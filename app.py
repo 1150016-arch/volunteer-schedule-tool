@@ -26,6 +26,16 @@ with col2:
     st.subheader("2. 上傳表格 B (登記發心名單)")
     file_b = st.file_uploader("選擇表格 B (.xlsx, .xls)", type=["xlsx", "xls"], key="file_b")
 
+def load_clean_b(file):
+    # 讀取表格 B 並自動處理第二列才是標題的問題
+    df = pd.read_excel(file)
+    if '義工編號' not in df.columns and '編號' not in df.columns:
+        # 檢查第一列是否包含欄位名稱
+        if any(df.iloc[0].astype(str).str.contains('義工編號|編號')):
+            df.columns = df.iloc[0]
+            df = df[1:].reset_index(drop=True)
+    return df
+
 def process_schedule(df_a, df_b):
     # 1. 依據 SOP 清洗表格 B，移除不需要的欄位
     drop_cols = [
@@ -41,7 +51,6 @@ def process_schedule(df_a, df_b):
     # VLOOKUP 匯入 <A> 資料
     a_indexed = df_a.set_index(a_id_col)
     
-    # 欄位對應（防呆檢查）
     df_b_cleaned['館'] = df_b_cleaned[b_id_col].map(a_indexed['館別']) if '館別' in a_indexed.columns else ''
     df_b_cleaned['哨'] = df_b_cleaned[b_id_col].map(a_indexed['哨別']) if '哨別' in a_indexed.columns else ''
     df_b_cleaned['任'] = df_b_cleaned[b_id_col].map(a_indexed['任務']) if '任務' in a_indexed.columns else ''
@@ -98,7 +107,7 @@ if file_a and file_b:
             st.info(f"表格 A 包含的工作表：{', '.join(xls_a.sheet_names)}")
         else:
             df_a = pd.read_excel(xls_a, sheet_name=target_date)
-            df_b = pd.read_excel(file_b)
+            df_b = load_clean_b(file_b)
 
             st.success("✅ 檔案讀取成功！點擊下方按鈕開始排班轉換。")
 
