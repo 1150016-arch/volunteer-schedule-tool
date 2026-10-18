@@ -30,7 +30,6 @@ def load_clean_b(file):
     # 讀取表格 B 並自動處理第二列才是標題的問題
     df = pd.read_excel(file)
     if '義工編號' not in df.columns and '編號' not in df.columns:
-        # 檢查第一列是否包含欄位名稱
         if any(df.iloc[0].astype(str).str.contains('義工編號|編號')):
             df.columns = df.iloc[0]
             df = df[1:].reset_index(drop=True)
@@ -48,10 +47,10 @@ def process_schedule(df_a, df_b):
     a_id_col = '編號' if '編號' in df_a.columns else ('義工編號' if '義工編號' in df_a.columns else df_a.columns[1])
     b_id_col = '義工編號' if '義工編號' in df_b_cleaned.columns else ('編號' if '編號' in df_b_cleaned.columns else df_b_cleaned.columns[0])
 
-    # 關鍵修正：剔除表格 A 中的空白列與重複編號
-df_a_clean = df_a.dropna(subset=[a_id_col])
-df_a_unique = df_a_clean.drop_duplicates(subset=[a_id_col]).set_index(a_id_col)
-    
+    # 剔除表格 A 中的空白列與重複編號
+    df_a_clean = df_a.dropna(subset=[a_id_col])
+    df_a_unique = df_a_clean.drop_duplicates(subset=[a_id_col]).set_index(a_id_col)
+
     df_b_cleaned['館'] = df_b_cleaned[b_id_col].map(df_a_unique['館別']) if '館別' in df_a_unique.columns else ''
     df_b_cleaned['哨'] = df_b_cleaned[b_id_col].map(df_a_unique['哨別']) if '哨別' in df_a_unique.columns else ''
     df_b_cleaned['任'] = df_b_cleaned[b_id_col].map(df_a_unique['任務']) if '任務' in df_a_unique.columns else ''
@@ -93,38 +92,4 @@ df_a_unique = df_a_clean.drop_duplicates(subset=[a_id_col]).set_index(a_id_col)
 
         df_b_cleaned.to_excel(writer, sheet_name="館員用", index=False)
 
-        df_sub = df_b_cleaned[df_b_cleaned['館'] == '分館'] if '館' in df_b_cleaned.columns else df_b_cleaned
-        df_sub.to_excel(writer, sheet_name="分館上哨白板組長用", index=False)
-
-    output.seek(0)
-    return output
-
-if file_a and file_b:
-    try:
-        xls_a = pd.ExcelFile(file_a)
-        
-        if target_date not in xls_a.sheet_names:
-            st.error(f"⚠️ 在表格 A 中找不到名稱為 **{target_date}** 的工作表！請確認側邊欄的日期設定。")
-            st.info(f"表格 A 包含的工作表：{', '.join(xls_a.sheet_names)}")
-        else:
-            df_a = pd.read_excel(xls_a, sheet_name=target_date)
-            df_b = load_clean_b(file_b)
-
-            st.success("✅ 檔案讀取成功！點擊下方按鈕開始排班轉換。")
-
-            if st.button("🚀 開始自動排班並轉換表格 C", type="primary"):
-                with st.spinner("正在處理中..."):
-                    result_excel = process_schedule(df_a, df_b)
-                
-                st.balloons()
-                st.download_button(
-                    label="📥 下載完成的表格 C (.xlsx)",
-                    data=result_excel,
-                    file_name=f"表格C_排班完成_{target_date}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-
-    except Exception as e:
-        st.error(f"❌ 處理過程發生錯誤：{str(e)}")
-else:
-    st.info("💡 請在上方同時上傳表格 A 與表格 B 進行轉換。")
+        df_sub = df_b_cleaned[df_b_cleaned['館'] == '分館'] if '館'
