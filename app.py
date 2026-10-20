@@ -165,7 +165,7 @@ with tab1:
             a_id_col
         )
 
-        # 清除不需要的欄位（含您指定的項目）
+        # 清除不需要的欄位
         drop_cols = [
             "大隊別",
             "小隊別",
@@ -189,7 +189,7 @@ with tab1:
             columns=[c for c in drop_cols if c in df_b.columns]
         ).copy()
 
-        # VLOOKUP 表格 A
+        # VLOOKUP 表格 A (包含新增的「仰懷宗範」)
         df_b_cleaned["館"] = (
             df_b_cleaned[b_id_col].map(df_a_unique["館別"])
             if "館別" in df_a_unique.columns
@@ -210,6 +210,15 @@ with tab1:
             if "特展定導" in df_a_unique.columns
             else ""
         )
+
+        # 自動 VLOOKUP「仰懷宗範」
+        zongfan_col_a = next(
+            (c for c in df_a_unique.columns if "仰懷宗範" in str(c)), None
+        )
+        if zongfan_col_a:
+          df_b_cleaned["仰懷宗範"] = df_b_cleaned[b_id_col].map(
+              df_a_unique[zongfan_col_a]
+          )
 
         car_col_a = None
         for c in ["同館哨/親眷或共乘", "車牌號碼", "車牌", "車號"]:
@@ -234,12 +243,12 @@ with tab1:
         base_cols = list(df_b_cleaned.columns)
         if "精舍" in base_cols:
           idx = base_cols.index("精舍") + 1
-          for c in ["館", "哨", "任", "特展"]:
-            if c in base_cols:
-              base_cols.remove(c)
-          new_cols = (
-              base_cols[:idx] + ["館", "哨", "任", "特展"] + base_cols[idx:]
-          )
+          add_cols = [
+              c for c in ["館", "哨", "任", "特展", "仰懷宗範"] if c in base_cols
+          ]
+          for c in add_cols:
+            base_cols.remove(c)
+          new_cols = base_cols[:idx] + add_cols + base_cols[idx:]
           df_b_cleaned = df_b_cleaned[new_cols]
 
         no_time_count = 0
@@ -362,7 +371,10 @@ with tab1:
           setup_sheet_print(ws)
 
         out1.seek(0)
-        st.success("✅ 初步比對完成！無用欄位已剔除、共乘與時間異常已標記。")
+        st.success(
+            "✅"
+            " 初步比對完成！已成功對照『仰懷宗範』導覽資格、去除無用欄位並自動標記共乘/時間。"
+        )
         st.download_button(
             label="📥 下載待確認班表 (.xlsx)",
             data=out1,
@@ -398,7 +410,7 @@ with tab2:
       )
       df_final = pd.read_excel(xls_f, sheet_name=sheet_use)
 
-      if st.button("🚀 一鍵生成完整列印 Sheet (含掛退單智慧接駁)", type="primary"):
+      if st.button("🚀 一鍵生成完整列印 Sheet", type="primary"):
         b_id_col = (
             "義工編號"
             if "義工編號" in df_final.columns
@@ -424,9 +436,15 @@ with tab2:
           df_final.to_excel(writer, sheet_name=target_date_2, index=False)
           setup_sheet_print(writer.sheets[target_date_2])
 
-          # 2. 館員用 (連動公式)
+          # 2. 館員用 (連動公式，包含 仰懷宗範、常設定導、特展定導、菩薩券、午齋)
           df_staff = df_final.copy()
-          for col_needed in ["常設定導", "特展定導", "菩薩券", "午齋"]:
+          for col_needed in [
+              "常設定導",
+              "特展定導",
+              "仰懷宗範",
+              "菩薩券",
+              "午齋",
+          ]:
             if col_needed not in df_staff.columns:
               df_staff[col_needed] = 1 if col_needed == "午齋" else ""
 
@@ -588,7 +606,7 @@ with tab2:
               )
               setup_sheet_print(writer.sheets["本館B哨組長表"])
 
-          # 6. 兩館接駁乘車名單（智慧掛退單判斷）
+          # 6. 兩館接駁乘車名單
           gua_col = next(
               (c for c in df_final.columns if "掛單" in str(c)), None
           )
@@ -601,16 +619,14 @@ with tab2:
 
           for _, r in df_final.iterrows():
             has_shuttle = False
-            to_sub = ""  # 主體到大博
-            to_main = ""  # 大博到主體
+            to_sub = ""
+            to_main = ""
 
-            # 1. 若有掛退單日期欄位，優先以掛退單日期判斷
             if gua_col and tui_col and cur_md:
               g_md = parse_m_d(r.get(gua_col))
               t_md = parse_m_d(r.get(tui_col))
 
               if g_md and t_md:
-                # 日期轉為可比較整數 MM*100 + DD
                 c_val = cur_md[0] * 100 + cur_md[1]
                 g_val = g_md[0] * 100 + g_md[1]
                 t_val = t_md[0] * 100 + t_md[1]
@@ -620,15 +636,14 @@ with tab2:
                   if c_val == g_val and c_val == t_val:
                     to_main = "1"
                     to_sub = "1"
-                  elif c_val == g_val:  # 掛單當日：大博到主體
+                  elif c_val == g_val:
                     to_main = "1"
-                  elif c_val == t_val:  # 退單當日：主體到大博
+                  elif c_val == t_val:
                     to_sub = "1"
-                  else:  # 中間日：雙向均要
+                  else:
                     to_main = "1"
                     to_sub = "1"
 
-            # 2. 若無掛退單日期或沒判定出，備用傳統標記(1/0)欄位
             if not has_shuttle:
               m_to_d = str(r.get("主體到大博", "")).strip()
               d_to_m = str(r.get("大博到主體", "")).strip()
@@ -723,7 +738,7 @@ with tab2:
 
         out2.seek(0)
         st.balloons()
-        st.success("🎉 列印檔生成成功！已自動完成掛退單智慧接駁計算。")
+        st.success("🎉 列印檔生成成功！已自動包含仰懷宗範與智慧接駁判斷。")
         st.download_button(
             label="📥 下載表格 C 列印檔 (.xlsx)",
             data=out2,
