@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("📅 義工排班與列印檔自動生成系統")
 st.markdown("本系統採 **兩階段處理**：先生成待確認班表，確認後一鍵生成所有列印頁籤（含自動彙整票口導覽資訊）。")
 
-tab1, tab2 = st.tabs(["1️⃣ 階段一：初步 VLOOKUP 比對與車牌著色", "2️⃣ 階段二：生成最終表格 C 與列印檔"])
+tab1, tab2 = st.tabs(["1️⃣ 階段一：初步 VLOOKUP 比對與共乘/需求著色", "2️⃣ 階段二：生成最終表格 C 與列印檔"])
 
 PASTEL_COLORS = [
     "FFF2CC", "D9EAD3", "D0E0E3", "F4CCCC", "EFE5D9",
@@ -59,11 +59,11 @@ def process_bulletin_phone(df_in):
     return df_out
 
 # ==========================================
-# 階段一：初步 VLOOKUP 比對與車牌著色
+# 階段一：初步 VLOOKUP 比對與車牌/共乘著色
 # ==========================================
 with tab1:
-    st.header("1️⃣ 匯入原始檔案，生成帶有【車牌色彩與時間提醒】的待確認班表")
-    target_date_1 = st.text_input("排班日期 / Sheet 名稱", value="1021", key="t1_date")
+    st.header("1️⃣ 匯入原始檔案，生成帶有【共乘色彩與時間提醒】的待確認班表")
+    target_date_1 = st.text_input("排班日期 / Sheet 名稱", value="1022", key="t1_date")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -89,21 +89,24 @@ with tab1:
                 drop_cols = ['大隊別', '小隊別', '防疫證書證號', '任務', '地點', '檢定資格', '活動名稱', '護持開始時間', '護持結束時間']
                 df_b_cleaned = df_b.drop(columns=[c for c in drop_cols if c in df_b.columns]).copy()
 
+                # 精準 VLOOKUP 表格 A 欄位
                 df_b_cleaned['館'] = df_b_cleaned[b_id_col].map(df_a_unique['館別']) if '館別' in df_a_unique.columns else ''
                 df_b_cleaned['哨'] = df_b_cleaned[b_id_col].map(df_a_unique['哨別']) if '哨別' in df_a_unique.columns else ''
                 df_b_cleaned['任'] = df_b_cleaned[b_id_col].map(df_a_unique['任務']) if '任務' in df_a_unique.columns else ''
                 df_b_cleaned['特展'] = df_b_cleaned[b_id_col].map(df_a_unique['特展定導']) if '特展定導' in df_a_unique.columns else ''
 
+                # 對照【同館哨/親眷或共乘】欄位
                 car_col_a = None
-                for c in ['車牌號碼', '車牌', '車號']:
+                for c in ['同館哨/親眷或共乘', '車牌號碼', '車牌', '車號']:
                     if c in df_a_unique.columns:
                         car_col_a = c
                         break
                 if car_col_a:
-                    df_b_cleaned['車牌號碼'] = df_b_cleaned[b_id_col].map(df_a_unique[car_col_a])
+                    df_b_cleaned['同館哨/親眷或共乘'] = df_b_cleaned[b_id_col].map(df_a_unique[car_col_a])
 
+                # 對照【特殊需求】欄位作為常態備註
                 remark_col_a = None
-                for c in ['備註', '備註1', '常態備註', '個人備註']:
+                for c in ['特殊需求', '備註', '備註1', '常態備註', '個人備註']:
                     if c in df_a_unique.columns:
                         remark_col_a = c
                         break
@@ -148,7 +151,7 @@ with tab1:
 
                     for col_idx, col_name in enumerate(df_b_cleaned.columns, 1):
                         c_str = str(col_name)
-                        if c_str in ['車牌號碼', '車牌', '車號']:
+                        if c_str in ['同館哨/親眷或共乘', '車牌號碼', '車牌', '車號']:
                             car_col_b = col_idx
                         if c_str in ['姓名', '義工姓名']:
                             name_col_b = col_idx
@@ -157,9 +160,11 @@ with tab1:
                         if c_str in ['發心迄止時間', '發心結束時間', '發心截止時間']:
                             end_time_col_b = col_idx
 
+                    # 針對「同館哨/親眷或共乘」或「車牌」塗色（排除 0 與空白）
                     if car_col_b:
-                        car_values = df_b_cleaned.iloc[:, car_col_b - 1].dropna().astype(str).str.strip()
-                        car_counts = car_values.value_counts()
+                        car_series = df_b_cleaned.iloc[:, car_col_b - 1].dropna().astype(str).str.strip()
+                        car_series = car_series[~car_series.isin(['0', '0.0', 'nan', ''])]
+                        car_counts = car_series.value_counts()
                         valid_cars = car_counts[car_counts > 1].index.tolist()
 
                         car_color_map = {}
@@ -176,6 +181,7 @@ with tab1:
                                     ws.cell(row=excel_row, column=name_col_b).fill = fill
                                 ws.cell(row=excel_row, column=car_col_b).fill = fill
 
+                    # 發心時間異常提醒（遲到/早退）
                     if start_time_col_b or end_time_col_b:
                         for row_idx, row in df_b_cleaned.iterrows():
                             excel_row = row_idx + 2
@@ -193,7 +199,7 @@ with tab1:
 
                 out1.seek(0)
 
-                st.success("✅ 初步比對完成！同車牌姓名已上色、發心時間異常（遲到/早退）者已塗上淺橘色提醒。")
+                st.success("✅ 初步比對完成！同共乘/親眷姓名已上色、發心時間異常（遲到/早退）者已塗上淺橘色提醒。")
                 st.download_button(
                     label="📥 下載待確認班表 (.xlsx)",
                     data=out1,
@@ -209,7 +215,7 @@ with tab1:
 with tab2:
     st.header("2️⃣ 上傳最終班表，生成表格 C 與所有列印 Sheet")
     file_final = st.file_uploader("上傳您已排好/確認好的工作班表 (.xlsx)", type=["xlsx", "xls"], key="f_final")
-    target_date_2 = st.text_input("排班日期 / Sheet 名稱", value="1021", key="t2_date")
+    target_date_2 = st.text_input("排班日期 / Sheet 名稱", value="1022", key="t2_date")
 
     if file_final:
         try:
@@ -306,7 +312,6 @@ with tab2:
                     setup_sheet_print(writer.sheets["團導"])
 
                     # 6. 自動抽取並生成「票口導覽資訊」SHEET
-                    # 搜尋導覽相關欄位 (第一哨、第二哨、第三哨)
                     s1_col = next((c for c in df_final.columns if '第一哨' in str(c)), None)
                     s2_col = next((c for c in df_final.columns if '第二哨' in str(c)), None)
                     s3_col = next((c for c in df_final.columns if '第三哨' in str(c)), None)
@@ -320,9 +325,7 @@ with tab2:
                         ["", f"{target_date_2[:2]}/{target_date_2[2:]}", "本館", "定導", "哨點", "第一哨\nA:09:00-10:30\nB:10:30-12:10", "第二哨\nA:12:10-13:10\nB:13:10-14:00", "第三哨\nA:14:00-15:15\nB:15:15-16:30"]
                     ]
 
-                    # 抓取導覽員資料填入票口導覽表
                     if task_col and hall_col and shao_col:
-                        # 篩選導覽任務（展廳/特展定導）
                         guide_df = df_final[df_final[task_col].astype(str).str.contains('導覽|定導')]
                         for _, grow in guide_df.iterrows():
                             g_hall = str(grow.get(hall_col, ''))
