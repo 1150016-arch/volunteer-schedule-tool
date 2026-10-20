@@ -1,8 +1,10 @@
+from datetime import datetime
 import io
+import re
 import openpyxl
 import pandas as pd
 import streamlit as st
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.styles import Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 
 st.set_page_config(
@@ -49,7 +51,7 @@ def load_clean_b(file):
 
 
 def setup_sheet_print(ws, orientation="landscape"):
-  """設定 Excel 列印屬性：自動縮放為 1 頁寬，加粗邊框與最適欄寬"""
+  """設定 Excel 列印屬性：自動縮放為 1 頁寬，並自動適應欄寬"""
   ws.page_setup.orientation = (
       ws.ORIENTATION_LANDSCAPE
       if orientation == "landscape"
@@ -60,7 +62,6 @@ def setup_sheet_print(ws, orientation="landscape"):
   ws.page_setup.fitToWidth = 1
   ws.page_setup.fitToHeight = 0
 
-  # 自動調整欄寬
   for col in ws.columns:
     max_len = 0
     col_letter = get_column_letter(col[0].column)
@@ -105,13 +106,26 @@ def process_bulletin_phone(df_in):
   return df_out
 
 
+def parse_m_d(date_str):
+  """剖析如 '10/18', '1018', '10-18' 等日期格式，回傳 (月, 日)"""
+  if pd.isna(date_str):
+    return None
+  s = str(date_str).strip()
+  m = re.search(r"(\d{1,2})[/\-_](\d{1,2})", s)
+  if m:
+    return (int(m.group(1)), int(m.group(2)))
+  if len(s) == 4 and s.isdigit():
+    return (int(s[:2]), int(s[2:]))
+  return None
+
+
 # ==========================================
-# 階段一：初步 VLOOKUP 比對與車牌/共乘著色
+# 階段一：初步 VLOOKUP 比對與欄位清理
 # ==========================================
 with tab1:
   st.header("1️⃣ 匯入原始檔案，生成帶有【共乘色彩與時間提醒】的待確認班表")
   target_date_1 = st.text_input(
-      "排班日期 / Sheet 名稱", value="1022", key="t1_date"
+      "排班日期 / Sheet 名稱 (如: 1022 或 10/22)", value="1022", key="t1_date"
   )
 
   col1, col2 = st.columns(2)
@@ -151,6 +165,7 @@ with tab1:
             a_id_col
         )
 
+        # 清除不需要的欄位（含您指定的項目）
         drop_cols = [
             "大隊別",
             "小隊別",
@@ -161,6 +176,14 @@ with tab1:
             "活動名稱",
             "護持開始時間",
             "護持結束時間",
+            "異動備註",
+            "動態備註(表格B)",
+            "備註2",
+            "備註3",
+            "備註4",
+            "是否納保",
+            "保險註記",
+            "精舍確認",
         ]
         df_b_cleaned = df_b.drop(
             columns=[c for c in drop_cols if c in df_b.columns]
@@ -207,13 +230,6 @@ with tab1:
           df_b_cleaned["常態備註(表格A)"] = df_b_cleaned[b_id_col].map(
               df_a_unique[remark_col_a]
           )
-
-        rename_dict = {}
-        for c in df_b_cleaned.columns:
-          if str(c) in ["備註", "備註1"] and c != "常態備註(表格A)":
-            rename_dict[c] = "動態備註(表格B)"
-        if rename_dict:
-          df_b_cleaned.rename(columns=rename_dict, inplace=True)
 
         base_cols = list(df_b_cleaned.columns)
         if "精舍" in base_cols:
@@ -346,7 +362,7 @@ with tab1:
           setup_sheet_print(ws)
 
         out1.seek(0)
-        st.success("✅ 初步比對完成！已自動對齊共乘與時間異常。")
+        st.success("✅ 初步比對完成！無用欄位已剔除、共乘與時間異常已標記。")
         st.download_button(
             label="📥 下載待確認班表 (.xlsx)",
             data=out1,
@@ -359,7 +375,7 @@ with tab1:
       st.error(f"❌ 處理失敗：{str(e)}")
 
 # ==========================================
-# 階段二：生成最終表格 C 與所有列印頁籤 (嚴格對照照片欄位)
+# 階段二：生成最終表格 C 與所有列印頁籤 (含掛退單接駁判斷)
 # ==========================================
 with tab2:
   st.header("2️⃣ 上傳最終班表，生成表格 C 與所有列印 Sheet")
@@ -369,7 +385,7 @@ with tab2:
       key="f_final",
   )
   target_date_2 = st.text_input(
-      "排班日期 / Sheet 名稱", value="1022", key="t2_date"
+      "排班日期 / Sheet 名稱 (如: 1022)", value="1022", key="t2_date"
   )
 
   if file_final:
@@ -382,7 +398,7 @@ with tab2:
       )
       df_final = pd.read_excel(xls_f, sheet_name=sheet_use)
 
-      if st.button("🚀 一鍵生成完整列印 Sheet (嚴格對齊照片規格)", type="primary"):
+      if st.button("🚀 一鍵生成完整列印 Sheet (含掛退單智慧接駁)", type="primary"):
         b_id_col = (
             "義工編號"
             if "義工編號" in df_final.columns
@@ -404,18 +420,16 @@ with tab2:
         out2 = io.BytesIO()
         with pd.ExcelWriter(out2, engine="openpyxl") as writer:
 
-          # 1. 大班表 (總班表)
+          # 1. 大班表
           df_final.to_excel(writer, sheet_name=target_date_2, index=False)
           setup_sheet_print(writer.sheets[target_date_2])
 
-          # 2. 館員用 (連動公式，包含 菩薩券、常設定導、特展定導、午齋)
+          # 2. 館員用 (連動公式)
           df_staff = df_final.copy()
-          # 補齊實體照片特有欄位
           for col_needed in ["常設定導", "特展定導", "菩薩券", "午齋"]:
             if col_needed not in df_staff.columns:
               df_staff[col_needed] = 1 if col_needed == "午齋" else ""
 
-          # 寫入連動公式
           for row_idx in range(len(df_staff)):
             excel_row = row_idx + 2
             for col_idx, col_name in enumerate(df_staff.columns):
@@ -430,7 +444,7 @@ with tab2:
           df_staff.to_excel(writer, sheet_name="館員用", index=False)
           setup_sheet_print(writer.sheets["館員用"])
 
-          # 3. 本館義工用齋登記 (僅限本館，備註為哨別或特殊任務)
+          # 3. 本館義工用齋登記
           if hall_col:
             df_meal_src = df_final[
                 df_final[hall_col].astype(str).str.contains("本")
@@ -463,14 +477,11 @@ with tab2:
                 if pd.notna(r.get("法名", ""))
                 else ""
             )
-            if fm and fm != "nan":
-              name_list.append(f"{nm}({fm})")
-            else:
-              name_list.append(nm)
+            full_n = f"{nm}({fm})" if fm and fm != "nan" else nm
+            name_list.append(full_n)
           df_meal_out["姓名(法名)"] = name_list
           df_meal_out["午齋"] = 1
 
-          # 備註邏輯：若有特殊任務(如禪茶、校外教學)寫任務，否則寫哨別(A/B)
           remarks = []
           for _, r in df_meal_src.iterrows():
             tk = str(r.get(task_col, "")) if task_col else ""
@@ -491,7 +502,6 @@ with tab2:
               writer, sheet_name="本館義工用齋登記", index=False
           )
           ws_meal = writer.sheets["本館義工用齋登記"]
-          # 加入最下方合計列
           last_r = len(df_meal_out) + 2
           ws_meal.cell(row=last_r, column=4, value="合計").alignment = Alignment(
               horizontal="center"
@@ -501,7 +511,7 @@ with tab2:
           ).alignment = Alignment(horizontal="center")
           setup_sheet_print(ws_meal, orientation="portrait")
 
-          # 4. 分館義工輪值表 (專屬獨立 SHEET，包含分館獨立哨點時間)
+          # 4. 分館義工輪值表
           s1_col = next(
               (c for c in df_final.columns if "第一哨" in str(c)), None
           )
@@ -556,9 +566,8 @@ with tab2:
               )
           setup_sheet_print(ws_sub)
 
-          # 5. 組長班表 (本館A哨組長表 / 本館B哨組長表 - 含完整組員與電話)
+          # 5. 組長班表
           if hall_col and shao_col:
-            # 本館 A 哨
             df_lead_a = df_final[
                 (df_final[hall_col].astype(str).str.contains("本"))
                 & (df_final[shao_col].astype(str) == "A")
@@ -569,7 +578,6 @@ with tab2:
               )
               setup_sheet_print(writer.sheets["本館A哨組長表"])
 
-            # 本館 B 哨
             df_lead_b = df_final[
                 (df_final[hall_col].astype(str).str.contains("本"))
                 & (df_final[shao_col].astype(str) == "B")
@@ -580,19 +588,65 @@ with tab2:
               )
               setup_sheet_print(writer.sheets["本館B哨組長表"])
 
-          # 6. 兩館接駁乘車名單
-          shuttle_cols = [
-              c
-              for c in df_final.columns
-              if "主體到大博" in str(c) or "大博到主體" in str(c)
-          ]
-          if shuttle_cols:
-            mask = False
-            for sc in shuttle_cols:
-              mask = mask | (df_final[sc].astype(str).str.strip() == "1")
-            df_shuttle = df_final[mask]
-          else:
+          # 6. 兩館接駁乘車名單（智慧掛退單判斷）
+          gua_col = next(
+              (c for c in df_final.columns if "掛單" in str(c)), None
+          )
+          tui_col = next(
+              (c for c in df_final.columns if "退單" in str(c)), None
+          )
+
+          cur_md = parse_m_d(target_date_2)
+          shuttle_rows = []
+
+          for _, r in df_final.iterrows():
+            has_shuttle = False
+            to_sub = ""  # 主體到大博
+            to_main = ""  # 大博到主體
+
+            # 1. 若有掛退單日期欄位，優先以掛退單日期判斷
+            if gua_col and tui_col and cur_md:
+              g_md = parse_m_d(r.get(gua_col))
+              t_md = parse_m_d(r.get(tui_col))
+
+              if g_md and t_md:
+                # 日期轉為可比較整數 MM*100 + DD
+                c_val = cur_md[0] * 100 + cur_md[1]
+                g_val = g_md[0] * 100 + g_md[1]
+                t_val = t_md[0] * 100 + t_md[1]
+
+                if g_val <= c_val <= t_val:
+                  has_shuttle = True
+                  if c_val == g_val and c_val == t_val:
+                    to_main = "1"
+                    to_sub = "1"
+                  elif c_val == g_val:  # 掛單當日：大博到主體
+                    to_main = "1"
+                  elif c_val == t_val:  # 退單當日：主體到大博
+                    to_sub = "1"
+                  else:  # 中間日：雙向均要
+                    to_main = "1"
+                    to_sub = "1"
+
+            # 2. 若無掛退單日期或沒判定出，備用傳統標記(1/0)欄位
+            if not has_shuttle:
+              m_to_d = str(r.get("主體到大博", "")).strip()
+              d_to_m = str(r.get("大博到主體", "")).strip()
+              if m_to_d == "1" or d_to_m == "1":
+                has_shuttle = True
+                to_sub = "1" if m_to_d == "1" else ""
+                to_main = "1" if d_to_m == "1" else ""
+
+            if has_shuttle:
+              r_dict = r.to_dict()
+              r_dict["主體到大博"] = to_sub
+              r_dict["大博到主體"] = to_main
+              shuttle_rows.append(r_dict)
+
+          df_shuttle = pd.DataFrame(shuttle_rows)
+          if len(df_shuttle) == 0:
             df_shuttle = pd.DataFrame(columns=df_final.columns)
+
           df_shuttle.to_excel(
               writer, sheet_name="兩館接駁乘車名單", index=False
           )
@@ -609,75 +663,4 @@ with tab2:
             if t_col in df_bulletin.columns:
               df_bulletin[t_col] = ""
           df_bulletin.to_excel(writer, sheet_name="佈告欄大班表", index=False)
-          setup_sheet_print(writer.sheets["佈告欄大班表"])
-
-          # 8. 票口導覽資訊
-          date_str = (
-              f"{target_date_2[:2]}/{target_date_2[2:]}"
-              if len(target_date_2) >= 4
-              else target_date_2
-          )
-          piaokou_rows = [
-              [
-                  "參訪日期",
-                  "星期",
-                  "時間",
-                  "主題",
-                  "團體名稱",
-                  "人數",
-                  "預排導覽員",
-              ],
-              ["", "", "", "", "", "", ""],
-              [
-                  "",
-                  date_str,
-                  "本館",
-                  "定導",
-                  "哨點",
-                  "第一哨\nA:09:00-10:30\nB:10:30-12:10",
-                  "第二哨\nA:12:10-13:10\nB:13:10-14:00",
-                  "第三哨\nA:14:00-15:15\nB:15:15-16:30",
-              ],
-          ]
-          if task_col and hall_col and shao_col:
-            guide_df = df_final[
-                df_final[task_col].astype(str).str.contains("導覽|定導")
-            ]
-            for _, grow in guide_df.iterrows():
-              piaokou_rows.append([
-                  "",
-                  "",
-                  str(grow.get(hall_col, "")),
-                  "定導",
-                  str(grow.get(shao_col, "")),
-                  str(grow.get(s1_col, "")) if s1_col else "",
-                  str(grow.get(s2_col, "")) if s2_col else "",
-                  str(grow.get(s3_col, "")) if s3_col else "",
-              ])
-
-          df_pk = pd.DataFrame(piaokou_rows)
-          df_pk.to_excel(
-              writer, sheet_name="票口導覽資訊", index=False, header=False
-          )
-          ws_pk = writer.sheets["票口導覽資訊"]
-          for row in ws_pk.iter_rows():
-            for cell in row:
-              cell.alignment = Alignment(
-                  wrap_text=True, vertical="center", horizontal="center"
-              )
-          setup_sheet_print(ws_pk)
-
-        out2.seek(0)
-        st.balloons()
-        st.success("🎉 所有實體列印 Sheet 已 100% 精準對齊產出！")
-        st.download_button(
-            label="📥 下載表格 C 列印檔 (.xlsx)",
-            data=out2,
-            file_name=f"表格C_完整排班與列印檔_{target_date_2}.xlsx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-        )
-
-    except Exception as e:
-      st.error(f"❌ 處理失敗：{str(e)}")
+          setup
