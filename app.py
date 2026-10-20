@@ -10,7 +10,10 @@ st.set_page_config(
 st.title("📅 義工排班與自動更新系統")
 st.markdown("本系統採 **兩階段處理**：初步 VLOOKUP 比對 ➔ 模板排班後直接原檔更新。")
 
-tab1, tab2 = st.tabs(["1️⃣ 階段一：初步 VLOOKUP 比對與帶入", "2️⃣ 階段二：上傳模板原檔，直接更新並下載"])
+tab1, tab2 = st.tabs([
+    "1️⃣ 階段一：初步 VLOOKUP 比對與帶入",
+    "2️⃣ 階段二：上傳模板原檔，直接更新並下載",
+])
 
 
 def load_clean_b(file):
@@ -22,6 +25,23 @@ def load_clean_b(file):
       df.columns = df.iloc[0]
       df = df[1:].reset_index(drop=True)
   return df
+
+
+def get_openpyxl_wb(uploaded_file):
+  """確保無論上傳 .xls 或 .xlsx，都能轉為 openpyxl 可讀取的標準工作簿"""
+  filename = uploaded_file.name.lower()
+  if filename.endswith(".xls"):
+    # 若為舊版 .xls，先用 pandas 轉存為標準 .xlsx 記憶體流
+    xls_pd = pd.ExcelFile(uploaded_file, engine="xlrd")
+    output_bytes = io.BytesIO()
+    with pd.ExcelWriter(output_bytes, engine="openpyxl") as writer:
+      for sheet in xls_pd.sheet_names:
+        df_sheet = pd.read_excel(xls_pd, sheet_name=sheet)
+        df_sheet.to_excel(writer, sheet_name=sheet, index=False)
+    output_bytes.seek(0)
+    return openpyxl.load_workbook(output_bytes)
+  else:
+    return openpyxl.load_workbook(uploaded_file)
 
 
 # ==========================================
@@ -183,23 +203,23 @@ with tab1:
       st.error(f"❌ 處理失敗：{str(e)}")
 
 # ==========================================
-# 階段二：直接開啟模板原檔進行更新（完全保留格式）
+# 階段二：精準開啟模板原檔進行更新（完全相容 .xls/.xlsx）
 # ==========================================
 with tab2:
   st.header("2️⃣ 上傳排好班的模板檔，直接原檔更新")
   file_template = st.file_uploader(
       "上傳排好班的模板檔案 (.xlsx 或 .xls)",
-      type=["xlsx", "xls"],  # <--- 已放寬允許 .xls 上傳
+      type=["xlsx", "xls"],
       key="f_tpl",
   )
 
   if file_template:
     if st.button("🚀 在原模板檔上直接自動更新並下載", type="primary"):
       try:
-        # 直接讀取 Excel Workbook (完全保留原始排版與格式)
-        wb = openpyxl.load_workbook(file_template)
+        # 使用強化後的轉檔載入器
+        wb = get_openpyxl_wb(file_template)
 
-        # 1. 讀取「館員用」資料（從第 3 列開始讀取真實數據）
+        # 1. 讀取「館員用」資料
         ws_staff = (
             wb["館員用"]
             if "館員用" in wb.sheetnames
@@ -280,7 +300,7 @@ with tab2:
             )
             ws_guard.cell(row=idx, column=6, value=item["任務"])
 
-        # 存檔
+        # 寫入記憶體
         out_saved = io.BytesIO()
         wb.save(out_saved)
         out_saved.seek(0)
