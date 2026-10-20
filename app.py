@@ -663,4 +663,75 @@ with tab2:
             if t_col in df_bulletin.columns:
               df_bulletin[t_col] = ""
           df_bulletin.to_excel(writer, sheet_name="佈告欄大班表", index=False)
-          setup
+          setup_sheet_print(writer.sheets["佈告欄大班表"])
+
+          # 8. 票口導覽資訊
+          date_str = (
+              f"{target_date_2[:2]}/{target_date_2[2:]}"
+              if len(target_date_2) >= 4
+              else target_date_2
+          )
+          piaokou_rows = [
+              [
+                  "參訪日期",
+                  "星期",
+                  "時間",
+                  "主題",
+                  "團體名稱",
+                  "人數",
+                  "預排導覽員",
+              ],
+              ["", "", "", "", "", "", ""],
+              [
+                  "",
+                  date_str,
+                  "本館",
+                  "定導",
+                  "哨點",
+                  "第一哨\nA:09:00-10:30\nB:10:30-12:10",
+                  "第二哨\nA:12:10-13:10\nB:13:10-14:00",
+                  "第三哨\nA:14:00-15:15\nB:15:15-16:30",
+              ],
+          ]
+          if task_col and hall_col and shao_col:
+            guide_df = df_final[
+                df_final[task_col].astype(str).str.contains("導覽|定導")
+            ]
+            for _, grow in guide_df.iterrows():
+              piaokou_rows.append([
+                  "",
+                  "",
+                  str(grow.get(hall_col, "")),
+                  "定導",
+                  str(grow.get(shao_col, "")),
+                  str(grow.get(s1_col, "")) if s1_col else "",
+                  str(grow.get(s2_col, "")) if s2_col else "",
+                  str(grow.get(s3_col, "")) if s3_col else "",
+              ])
+
+          df_pk = pd.DataFrame(piaokou_rows)
+          df_pk.to_excel(
+              writer, sheet_name="票口導覽資訊", index=False, header=False
+          )
+          ws_pk = writer.sheets["票口導覽資訊"]
+          for row in ws_pk.iter_rows():
+            for cell in row:
+              cell.alignment = Alignment(
+                  wrap_text=True, vertical="center", horizontal="center"
+              )
+          setup_sheet_print(ws_pk)
+
+        out2.seek(0)
+        st.balloons()
+        st.success("🎉 列印檔生成成功！已自動完成掛退單智慧接駁計算。")
+        st.download_button(
+            label="📥 下載表格 C 列印檔 (.xlsx)",
+            data=out2,
+            file_name=f"表格C_完整排班與列印檔_{target_date_2}.xlsx",
+            mime=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+    except Exception as e:
+      st.error(f"❌ 處理失敗：{str(e)}")
