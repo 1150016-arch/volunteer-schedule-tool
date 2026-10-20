@@ -188,8 +188,8 @@ with tab1:
 with tab2:
   st.header("2️⃣ 上傳排好班的模板檔，直接原檔更新")
   file_template = st.file_uploader(
-      "上傳排好班的模板檔案 (請使用 .xlsx 格式)",
-      type=["xlsx"],
+      "上傳排好班的模板檔案 (.xlsx 或 .xls)",
+      type=["xlsx", "xls"],  # <--- 已放寬允許 .xls 上傳
       key="f_tpl",
   )
 
@@ -199,7 +199,7 @@ with tab2:
         # 直接讀取 Excel Workbook (完全保留原始排版與格式)
         wb = openpyxl.load_workbook(file_template)
 
-        # 1. 讀取「館員用」資料（從第3列開始讀取真實數據）
+        # 1. 讀取「館員用」資料（從第 3 列開始讀取真實數據）
         ws_staff = (
             wb["館員用"]
             if "館員用" in wb.sheetnames
@@ -208,7 +208,6 @@ with tab2:
 
         staff_data = []
         for r in range(3, ws_staff.max_row + 1):
-          no_val = ws_staff.cell(row=r, column=1).value
           hall_val = ws_staff.cell(row=r, column=2).value
           shao_val = ws_staff.cell(row=r, column=3).value
           task_val = ws_staff.cell(row=r, column=4).value
@@ -226,27 +225,22 @@ with tab2:
                 "姓名(法名)": str(name_val or ""),
             })
 
-        # ----------------------------------------
-        # 2. 更新「用齋用」Sheet (原檔儲存格寫入)
-        # ----------------------------------------
+        # 2. 更新「用齋用」Sheet
         if "用齋用" in wb.sheetnames:
           ws_meal = wb["用齋用"]
-
-          # 分離本館與分館人員
           main_meal = [
               d for d in staff_data if "本" in d["館別"] or d["館別"] == ""
           ]
           sub_meal = [d for d in staff_data if "分" in d["館別"]]
 
-          # 寫入本館用齋（從第3列開始，A-F欄）
+          # 本館用齋（寫入 A-F 欄）
           for idx, item in enumerate(main_meal, start=3):
-            ws_meal.cell(row=idx, column=1, value=idx - 2)  # 序號
+            ws_meal.cell(row=idx, column=1, value=idx - 2)
             ws_meal.cell(row=idx, column=2, value=item["編號"])
             ws_meal.cell(row=idx, column=3, value=item["精舍"])
             ws_meal.cell(row=idx, column=4, value=item["姓名(法名)"])
-            ws_meal.cell(row=idx, column=5, value=1)  # 午齋
+            ws_meal.cell(row=idx, column=5, value=1)
 
-            # 備註：有特殊任務寫任務，否則寫哨別
             tk = item["任務"]
             if any(
                 k in tk for k in ["禪茶", "校外教學", "導覽", "特展", "團★"]
@@ -255,7 +249,7 @@ with tab2:
             else:
               ws_meal.cell(row=idx, column=6, value=item["哨別"])
 
-          # 寫入分館用齋（從第3列開始，I-N欄）
+          # 分館用齋（寫入 I-N 欄）
           for idx, item in enumerate(sub_meal, start=3):
             ws_meal.cell(row=idx, column=9, value=idx - 2)
             ws_meal.cell(row=idx, column=10, value=item["編號"])
@@ -264,14 +258,11 @@ with tab2:
             ws_meal.cell(row=idx, column=13, value=1)
             ws_meal.cell(row=idx, column=14, value=item["哨別"])
 
-        # ----------------------------------------
         # 3. 更新「貼後上傳守護網用」Sheet
-        # ----------------------------------------
         if "貼後上傳守護網用(先糾錯，再安任務)" in wb.sheetnames:
           ws_guard = wb["貼後上傳守護網用(先糾錯，再安任務)"]
           for idx, item in enumerate(staff_data, start=2):
             ws_guard.cell(row=idx, column=1, value=item["編號"])
-            # 抽出純姓名/法名
             full_nm = item["姓名(法名)"]
             nm_only = full_nm.split("(")[0] if "(" in full_nm else full_nm
             fm_only = (
@@ -289,7 +280,7 @@ with tab2:
             )
             ws_guard.cell(row=idx, column=6, value=item["任務"])
 
-        # 將更新後的 Workbook 存入 Memory
+        # 存檔
         out_saved = io.BytesIO()
         wb.save(out_saved)
         out_saved.seek(0)
