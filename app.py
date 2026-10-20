@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("📅 義工排班與列印檔自動生成系統")
-st.markdown("本系統採 **兩階段處理**：先生成待確認班表，確認後一鍵生成所有列印頁籤（含團導與票口導覽資訊）。")
+st.markdown("本系統採 **兩階段處理**：先生成待確認班表，確認後一鍵生成所有列印頁籤（含自動彙整票口導覽資訊）。")
 
 tab1, tab2 = st.tabs(["1️⃣ 階段一：初步 VLOOKUP 比對與車牌著色", "2️⃣ 階段二：生成最終表格 C 與列印檔"])
 
@@ -102,7 +102,6 @@ with tab1:
                 if car_col_a:
                     df_b_cleaned['車牌號碼'] = df_b_cleaned[b_id_col].map(df_a_unique[car_col_a])
 
-                # 1. 自動帶入表格 A 的備註 (常態備註)
                 remark_col_a = None
                 for c in ['備註', '備註1', '常態備註', '個人備註']:
                     if c in df_a_unique.columns:
@@ -134,13 +133,6 @@ with tab1:
                     no_time_count = len(df_abnormal)
                     df_b_cleaned = pd.concat([df_normal, df_abnormal], ignore_index=True)
 
-                total_volunteers = len(df_b_cleaned) - no_time_count
-                st.subheader("📊 人數預估與配比建議看板")
-                m1, m2, m3 = st.columns(3)
-                m1.metric("今日可排班義工數", f"{total_volunteers} 人")
-                m2.metric("無發心時間義工 (置底)", f"{no_time_count} 人")
-                m3.metric("建議 A/B 哨分配", f"每哨約 {total_volunteers // 2} 人")
-
                 if no_time_count > 0:
                     st.warning(f"⚠️ 偵測到有 **{no_time_count}** 位義工無發心時間（僅報名上課/接駁），已自動移至表格最下方！如為本館上課請留意訂午齋需求。")
 
@@ -165,7 +157,6 @@ with tab1:
                         if c_str in ['發心迄止時間', '發心結束時間', '發心截止時間']:
                             end_time_col_b = col_idx
 
-                    # 2. 共乘車牌顏色同時標記在「姓名」與「車牌號碼」儲存格上
                     if car_col_b:
                         car_values = df_b_cleaned.iloc[:, car_col_b - 1].dropna().astype(str).str.strip()
                         car_counts = car_values.value_counts()
@@ -182,10 +173,9 @@ with tab1:
                                 fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
                                 excel_row = row_idx + 2
                                 if name_col_b:
-                                    ws.cell(row=excel_row, column=name_col_b).fill = fill  # 標記姓名
-                                ws.cell(row=excel_row, column=car_col_b).fill = fill       # 標記車牌
+                                    ws.cell(row=excel_row, column=name_col_b).fill = fill
+                                ws.cell(row=excel_row, column=car_col_b).fill = fill
 
-                    # 3. 發心時間異常提醒（含遲到與早退）：非 08:00 開始或非 17:00 結束均塗淺橘色
                     if start_time_col_b or end_time_col_b:
                         for row_idx, row in df_b_cleaned.iterrows():
                             excel_row = row_idx + 2
@@ -214,7 +204,7 @@ with tab1:
             st.error(f"❌ 處理失敗：{str(e)}")
 
 # ==========================================
-# 階段二：生成最終表格 C 與所有列印頁籤 (含團導與票口導覽資訊)
+# 階段二：生成最終表格 C 與所有列印頁籤 (自動抽取票口導覽)
 # ==========================================
 with tab2:
     st.header("2️⃣ 上傳最終班表，生成表格 C 與所有列印 Sheet")
@@ -227,21 +217,7 @@ with tab2:
             sheet_use = target_date_2 if target_date_2 in xls_f.sheet_names else xls_f.sheet_names[0]
             df_final = pd.read_excel(xls_f, sheet_name=sheet_use)
 
-            main_count = len(df_final[df_final['館'] != '分館']) if '館' in df_final.columns else len(df_final)
-            sub_count = len(df_final[df_final['館'] == '分館']) if '館' in df_final.columns else 0
-            a_count = len(df_final[df_final['哨'] == 'A']) if '哨' in df_final.columns else 0
-            b_count = len(df_final[df_final['哨'] == 'B']) if '哨' in df_final.columns else 0
-
-            st.subheader("📞 實時人數統計看板")
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("本館人數", f"{main_count} 人")
-            k2.metric("分館人數", f"{sub_count} 人")
-            k3.metric("A 哨人數", f"{a_count} 人")
-            k4.metric("B 哨人數", f"{b_count} 人")
-
             st.subheader("⚙️ 午齋單參數設定")
-            meal_tag = st.text_input("午齋單類別註記 (顯示於標題，例如：碑拓+校外)", value="碑拓+校外")
-
             cat_col = None
             for c in ['錄取類別', '類別', '單位', '動態備註(表格B)', '備註']:
                 if c in df_final.columns:
@@ -256,7 +232,7 @@ with tab2:
                 selected_meal_cats = None
                 st.info("ℹ️ 未偵測到明確類別欄位，將預設依據『館』欄位不為分館者列入午齋單。")
 
-            if st.button("🚀 一鍵生成完整表格 C (含團導與票口導覽資訊)", type="primary"):
+            if st.button("🚀 一鍵生成完整表格 C (含自動抽取的票口導覽資訊)", type="primary"):
                 b_id_col = '義工編號' if '義工編號' in df_final.columns else ('編號' if '編號' in df_final.columns else df_final.columns[0])
 
                 out2 = io.BytesIO()
@@ -329,19 +305,38 @@ with tab2:
                     df_tuandao.to_excel(writer, sheet_name="團導", index=False)
                     setup_sheet_print(writer.sheets["團導"])
 
-                    # 6. 票口導覽資訊 SHEET
-                    df_piaokou = pd.DataFrame([
+                    # 6. 自動抽取並生成「票口導覽資訊」SHEET
+                    # 搜尋導覽相關欄位 (第一哨、第二哨、第三哨)
+                    s1_col = next((c for c in df_final.columns if '第一哨' in str(c)), None)
+                    s2_col = next((c for c in df_final.columns if '第二哨' in str(c)), None)
+                    s3_col = next((c for c in df_final.columns if '第三哨' in str(c)), None)
+                    task_col = next((c for c in df_final.columns if '任' in str(c) or '任務' in str(c)), None)
+                    hall_col = next((c for c in df_final.columns if '館' in str(c)), None)
+                    shao_col = next((c for c in df_final.columns if '哨' in str(c)), None)
+
+                    piaokou_rows = [
                         ["參訪日期", "星期", "時間", "主題", "團體名稱", "人數", "預排導覽員"],
                         ["", "", "", "", "", "", ""],
-                        ["", f"{target_date_2[:2]}/{target_date_2[2:]}", "本館", "定導", "哨點", "第一哨\nA:09:00-10:30\nB:10:30-12:10", "第二哨\nA:12:10-13:10\nB:13:10-14:00"],
-                        ["", "", "A", "定導", "", "", ""],
-                        ["", "", "B", "定導", "", "", ""],
-                        ["", "", "", "", "", "", ""],
-                        ["", f"{target_date_2[:2]}/{target_date_2[2:]}", "分館", "定導", "哨點", "第一哨\nA:09:00-10:30\nB:10:30-12:10", "第二哨\nA:12:10-13:10\nB:13:10-14:00"],
-                        ["", "", "A", "定導", "", "", ""],
-                        ["", "", "B", "定導", "", "", ""]
-                    ], columns=["本館_團體導覽表", "Unnamed: 1", "Unnamed: 2", "Unnamed: 3", "Unnamed: 4", "Unnamed: 5", "Unnamed: 6"])
-                    df_piaokou.to_excel(writer, sheet_name="票口導覽資訊", index=False)
+                        ["", f"{target_date_2[:2]}/{target_date_2[2:]}", "本館", "定導", "哨點", "第一哨\nA:09:00-10:30\nB:10:30-12:10", "第二哨\nA:12:10-13:10\nB:13:10-14:00", "第三哨\nA:14:00-15:15\nB:15:15-16:30"]
+                    ]
+
+                    # 抓取導覽員資料填入票口導覽表
+                    if task_col and hall_col and shao_col:
+                        # 篩選導覽任務（展廳/特展定導）
+                        guide_df = df_final[df_final[task_col].astype(str).str.contains('導覽|定導')]
+                        for _, grow in guide_df.iterrows():
+                            g_hall = str(grow.get(hall_col, ''))
+                            g_shao = str(grow.get(shao_col, ''))
+                            g_s1 = str(grow.get(s1_col, '')) if s1_col else ''
+                            g_s2 = str(grow.get(s2_col, '')) if s2_col else ''
+                            g_s3 = str(grow.get(s3_col, '')) if s3_col else ''
+                            piaokou_rows.append(["", "", g_hall, "定導", g_shao, g_s1, g_s2, g_s3])
+                    else:
+                        piaokou_rows.append(["", "", "A", "定導", "", "", "", ""])
+                        piaokou_rows.append(["", "", "B", "定導", "", "", "", ""])
+
+                    df_piaokou = pd.DataFrame(piaokou_rows)
+                    df_piaokou.to_excel(writer, sheet_name="票口導覽資訊", index=False, header=False)
                     setup_sheet_print(writer.sheets["票口導覽資訊"])
 
                     # 7. 佈告欄大班表
@@ -365,7 +360,6 @@ with tab2:
                     setup_sheet_print(writer.sheets["分館佈告欄班表"])
 
                     # 9. 組長班表 (動態判斷)
-                    task_col = '任' if '任' in df_final.columns else ('任務' if '任務' in df_final.columns else None)
                     if task_col:
                         df_lead_main_a = df_final[(df_final[task_col].astype(str).str.contains('組長')) & (df_final['館'] != '分館') & (df_final['哨'] == 'A')]
                         if len(df_lead_main_a) > 0:
@@ -384,7 +378,7 @@ with tab2:
 
                 out2.seek(0)
                 st.balloons()
-                st.success("🎉 所有 Sheet 生成完畢（含團導與票口導覽資訊）！")
+                st.success("🎉 所有 Sheet 生成完畢（含自動抽取的票口導覽資訊）！")
                 st.download_button(
                     label="📥 下載完整表格 C (.xlsx)",
                     data=out2,
