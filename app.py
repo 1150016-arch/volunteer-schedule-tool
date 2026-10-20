@@ -1,5 +1,8 @@
 import io
+import re
 import openpyxl
+from openpyxl.styles import Alignment, PatternFill
+from openpyxl.utils import get_column_letter
 import pandas as pd
 import streamlit as st
 
@@ -9,7 +12,25 @@ st.set_page_config(
 
 st.title("📅 義工排班資料自動比對系統")
 st.markdown(
-    "匯入雲端預排檔（表格 A）與登記發心名單（表格 B），自動進行 VLOOKUP 比對、剔除無用欄位並自動標記導覽資格。"
+    "匯入雲端預排檔（表格 A）與登記發心名單（表格 B），自動進行 VLOOKUP 比對、剔除無用欄位，並**自動標註共乘色彩與時間異常提醒**。"
+)
+
+# 柔和粉彩配色池 (供共乘/親眷標註)
+PASTEL_COLORS = [
+    "FFF2CC",
+    "D9EAD3",
+    "D0E0E3",
+    "F4CCCC",
+    "EFE5D9",
+    "E1D5E7",
+    "FFE599",
+    "B6D7A8",
+    "A2C4C9",
+    "F1C232",
+]
+# 時間異常警告底色 (淺橘色)
+TIME_ABNORMAL_FILL = PatternFill(
+    start_color="FFE6CC", end_color="FFE6CC", fill_type="solid"
 )
 
 
@@ -25,11 +46,31 @@ def load_clean_b(file):
   return df
 
 
+def setup_sheet_style(ws):
+  """自動欄寬與列印縮放設定"""
+  ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+  ws.page_setup.paperSize = ws.PAPERSIZE_A4
+  ws.sheet_properties.pageSetUpPr.fitToPage = True
+  ws.page_setup.fitToWidth = 1
+  ws.page_setup.fitToHeight = 0
+
+  for col in ws.columns:
+    max_len = 0
+    col_letter = get_column_letter(col[0].column)
+    for cell in col:
+      if cell.value is not None:
+        lines = str(cell.value).split("\n")
+        line_len = max(len(l) for l in lines)
+        if line_len > max_len:
+          max_len = line_len
+    ws.column_dimensions[col_letter].width = min(max(max_len * 2.2, 10), 38)
+
+
 # ==========================================
-# 核心功能：VLOOKUP 資料比對與自動帶入
+# 核心功能：VLOOKUP 資料比對與自動帶入 + 著色
 # ==========================================
 target_date = st.text_input(
-    "排班日期 / Sheet 名稱 (如: 1021)", value="1021", key="t_date"
+    "排班日期 / Sheet 名稱 (如: 1022 或 1021)", value="1022", key="t_date"
 )
 
 col1, col2 = st.columns(2)
@@ -67,7 +108,7 @@ if file_a and file_b:
           a_id_col
       )
 
-      # 自動剔除非排班核心欄位
+      # 剔除非排班核心欄位
       drop_cols = [
           "大隊別",
           "小隊別",
@@ -159,12 +200,117 @@ if file_a and file_b:
         new_cols = base_cols[:idx] + add_cols + base_cols[idx:]
         df_b_cleaned = df_b_cleaned[new_cols]
 
+      # 無發心時間者自動置底
+      if "發心起始時間" in df_b_cleaned.columns:
+        df_normal = df_b_cleaned[df_b_cleaned["發心起始時間"].notna()].copy()
+        df_abnormal = df_b_cleaned[
+            df_b_cleaned["發心起始時間"].isna()
+        ].copy()
+        df_b_cleaned = pd.concat([df_normal, df_abnormal], ignore_index=True)
+
       out = io.BytesIO()
       with pd.ExcelWriter(out, engine="openpyxl") as writer:
         df_b_cleaned.to_excel(writer, sheet_name=target_date, index=False)
+        ws = writer.sheets[target_date]
+
+        # ----------------------------------------
+        # 自動著色處理：共乘對應與時間提醒
+        # ----------------------------------------
+        car_col_b = None
+        name_col_b = None
+        start_time_col_b = None
+        end_time_col_b = None
+
+        for col_idx, col_name in enumerate(df_b_cleaned.columns, 1):
+          c_str = str(col_name)
+          if c_str in ["同館哨/親眷或共乘", "車牌號碼", "車牌", "車號"]:
+            car_col_b = col_idx
+          if c_str in ["姓名", "義工姓名"]:
+            name_col_b = col_idx
+          if c_str in ["發心起始時間", "發心開始時間"]:
+            start_time_col_b = col_idx
+          if c_str in ["發心迄止時間", "發心結束時間", "發心截止時間"]:
+            end_time_col_b = col_idx
+
+        # 1. 共乘色彩著色
+        if car_col_b:
+          car_series = (
+              df_b_cleaned.iloc[:, car_col_b - 1]
+              .dropna()
+              .astype(str)
+              .str.strip()
+          )
+          car_series = car_series[
+              ~car_series.isin(["0", "0.0", "nan", "None", ""])
+          ]
+          car_counts = car_series.value_counts()
+          valid_cars = car_counts[car_counts > 1].index.tolist()
+
+          car_color_map = {}
+          for idx_c, car in enumerate(valid_cars):
+            car_color_map[car] = PASTEL_COLORS[idx_c % len(PASTEL_COLORS)]
+
+          for row_idx, row in df_b_cleaned.iterrows():
+            c_val = (
+                str(row.iloc[car_col_b - 1]).strip()
+                if pd.notna(row.iloc[car_col_b - 1])
+                else ""
+            )
+            if c_val in car_color_map:
+              color_hex = car_color_map[c_val]
+              fill = PatternFill(
+                  start_color=color_hex, end_color=color_hex, fill_type="solid"
+              )
+              excel_row = row_idx + 2
+              if name_col_b:
+                ws.cell(row=excel_row, column=name_col_b).fill = fill
+              ws.cell(row=excel_row, column=car_col_b).fill = fill
+
+        # 2. 發心時間異常提醒 (橘底)
+        if start_time_col_b or end_time_col_b:
+          for row_idx, row in df_b_cleaned.iterrows():
+            excel_row = row_idx + 2
+            st_val = (
+                str(row.iloc[start_time_col_b - 1]).strip()
+                if (
+                    start_time_col_b
+                    and pd.notna(row.iloc[start_time_col_b - 1])
+                )
+                else ""
+            )
+            et_val = (
+                str(row.iloc[end_time_col_b - 1]).strip()
+                if (end_time_col_b and pd.notna(row.iloc[end_time_col_b - 1]))
+                else ""
+            )
+
+            is_start_abnormal = (
+                st_val
+                and st_val != "nan"
+                and "08:00" not in st_val
+                and "8:00" not in st_val
+            )
+            is_end_abnormal = (
+                et_val
+                and et_val != "nan"
+                and "17:00" not in et_val
+                and "5:00" not in et_val
+            )
+
+            if is_start_abnormal or is_end_abnormal:
+              if start_time_col_b:
+                ws.cell(
+                    row=excel_row, column=start_time_col_b
+                ).fill = TIME_ABNORMAL_FILL
+              if end_time_col_b:
+                ws.cell(
+                    row=excel_row, column=end_time_col_b
+                ).fill = TIME_ABNORMAL_FILL
+
+        setup_sheet_style(ws)
 
       out.seek(0)
-      st.success("✅ 待確認班表自動比對完成！")
+      st.success("✅ 自動比對與色彩標註完成！")
       st.download_button(
           label="📥 下載待確認班表 (.xlsx)",
           data=out,
