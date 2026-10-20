@@ -4,12 +4,12 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="義工排班自動化系統", page_icon="📅", layout="wide"
+    page_title="義工排班資料自動比對系統", page_icon="📅", layout="wide"
 )
 
-st.title("📅 義工排班自動化系統")
+st.title("📅 義工排班資料自動比對系統")
 st.markdown(
-    "本系統協助完成 **階段一：初步 VLOOKUP 比對與資料帶入**，方便後續複製貼上至排班模板。"
+    "匯入雲端預排檔（表格 A）與登記發心名單（表格 B），自動進行 VLOOKUP 比對、剔除無用欄位並自動標記導覽資格。"
 )
 
 
@@ -26,11 +26,10 @@ def load_clean_b(file):
 
 
 # ==========================================
-# 階段一：初步 VLOOKUP 比對與帶入
+# 核心功能：VLOOKUP 資料比對與自動帶入
 # ==========================================
-st.header("1️⃣ 匯入原始檔案，生成待確認班表")
-target_date_1 = st.text_input(
-    "排班日期 / Sheet 名稱 (如: 1021)", value="1021", key="t1_date"
+target_date = st.text_input(
+    "排班日期 / Sheet 名稱 (如: 1021)", value="1021", key="t_date"
 )
 
 col1, col2 = st.columns(2)
@@ -46,10 +45,10 @@ with col2:
 if file_a and file_b:
   try:
     xls_a = pd.ExcelFile(file_a)
-    if target_date_1 not in xls_a.sheet_names:
-      st.error(f"⚠️ 在表格 A 中找不到名稱為 **{target_date_1}** 的工作表！")
+    if target_date not in xls_a.sheet_names:
+      st.error(f"⚠️ 在表格 A 中找不到名稱為 **{target_date}** 的工作表！")
     else:
-      df_a = pd.read_excel(xls_a, sheet_name=target_date_1)
+      df_a = pd.read_excel(xls_a, sheet_name=target_date)
       df_b = load_clean_b(file_b)
 
       a_id_col = (
@@ -68,7 +67,7 @@ if file_a and file_b:
           a_id_col
       )
 
-      # 剔除不需要的欄位
+      # 自動剔除非排班核心欄位
       drop_cols = [
           "大隊別",
           "小隊別",
@@ -160,16 +159,16 @@ if file_a and file_b:
         new_cols = base_cols[:idx] + add_cols + base_cols[idx:]
         df_b_cleaned = df_b_cleaned[new_cols]
 
-      out1 = io.BytesIO()
-      with pd.ExcelWriter(out1, engine="openpyxl") as writer:
-        df_b_cleaned.to_excel(writer, sheet_name=target_date_1, index=False)
+      out = io.BytesIO()
+      with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        df_b_cleaned.to_excel(writer, sheet_name=target_date, index=False)
 
-      out1.seek(0)
-      st.success("✅ 第一階段待確認班表生成成功！")
+      out.seek(0)
+      st.success("✅ 待確認班表自動比對完成！")
       st.download_button(
           label="📥 下載待確認班表 (.xlsx)",
-          data=out1,
-          file_name=f"工作班表_{target_date_1}_待確認.xlsx",
+          data=out,
+          file_name=f"工作班表_{target_date}_待確認.xlsx",
           mime=(
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           ),
