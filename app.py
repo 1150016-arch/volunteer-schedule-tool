@@ -15,7 +15,7 @@ st.markdown(
     "匯入雲端預排檔（表格 A）與登記綜合名單（表格 B），自動進行 VLOOKUP 比對、剔除非核心欄位，並**自動標註共乘色彩與時間異常提醒**。"
 )
 
-# 柔和粉彩配色池 (供共乘/親眷標註)
+# 32 色精選柔和粉彩配色池 (專為百人大型排班設計，高對比度不刺眼)
 PASTEL_COLORS = [
     "FFF2CC",
     "D9EAD3",
@@ -27,7 +27,30 @@ PASTEL_COLORS = [
     "B6D7A8",
     "A2C4C9",
     "F1C232",
+    "FCE5CD",
+    "D0E0E3",
+    "EAD1DC",
+    "D9D2E9",
+    "C9DAF8",
+    "FFF2CC",
+    "F9CB9C",
+    "EA9999",
+    "FFE599",
+    "B6D7A8",
+    "A2C4C9",
+    "9FC5E8",
+    "B4A7D6",
+    "D5A6BD",
+    "E06666",
+    "F6B26B",
+    "FFD966",
+    "93C47D",
+    "76A5AF",
+    "6FA8DC",
+    "8E7CC3",
+    "C27BA0",
 ]
+
 # 時間異常警告底色 (淺橘色)
 TIME_ABNORMAL_FILL = PatternFill(
     start_color="FFE6CC", end_color="FFE6CC", fill_type="solid"
@@ -37,7 +60,6 @@ TIME_ABNORMAL_FILL = PatternFill(
 def load_clean_b(file):
   """讀取新版表格 B：自動辨識標題列位置（相容第一列與第二列標題）"""
   df = pd.read_excel(file)
-  # 若第一列並非標題（找不到義工編號），檢查第二列
   if "義工編號" not in df.columns and "編號" not in df.columns:
     if len(df) > 0 and any(
         df.iloc[0].astype(str).str.contains("義工編號|編號|姓名")
@@ -71,7 +93,7 @@ def setup_sheet_style(ws):
 # 核心功能：VLOOKUP 資料比對與自動帶入 + 著色
 # ==========================================
 target_date = st.text_input(
-    "排班日期 / Sheet 名稱 (如: 1022 或 1025)", value="1022", key="t_date"
+    "排班日期 / Sheet 名稱 (如: 1022 或 1028)", value="1028", key="t_date"
 )
 
 col1, col2 = st.columns(2)
@@ -93,7 +115,6 @@ if file_a and file_b:
       df_a = pd.read_excel(xls_a, sheet_name=target_date)
       df_b = load_clean_b(file_b)
 
-      # 自動辨識 Key 欄位 (義工編號 / 編號)
       a_id_col = (
           "編號"
           if "編號" in df_a.columns
@@ -110,7 +131,7 @@ if file_a and file_b:
           a_id_col
       )
 
-      # 剔除不需要的非排班欄位
+      # 剔除不需要的非排班欄位（含護持起始/迄止時間）
       drop_cols = [
           "大隊別",
           "小隊別",
@@ -119,6 +140,8 @@ if file_a and file_b:
           "地點",
           "檢定資格",
           "活動名稱",
+          "護持起始時間",
+          "護持迄止時間",
           "護持開始時間",
           "護持結束時間",
           "異動備註",
@@ -190,7 +213,7 @@ if file_a and file_b:
             df_a_unique[remark_col_a]
         )
 
-      # 調整欄位順序（把 VLOOKUP 出來的館、哨、任、特展、仰懷宗範，放在精舍後方）
+      # 調整欄位順序（放在精舍後方）
       base_cols = list(df_b_cleaned.columns)
       if "精舍" in base_cols:
         idx = base_cols.index("精舍") + 1
@@ -238,7 +261,7 @@ if file_a and file_b:
           if "發心" in c_str and ("迄" in c_str or "止" in c_str or "終" in c_str):
             end_time_col_b = col_idx
 
-        # 1. 共乘色彩著色
+        # 1. 共乘色彩著色 (支援百人 32 種粉彩輪替)
         if car_col_b:
           car_series = (
               df_b_cleaned.iloc[:, car_col_b - 1]
