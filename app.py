@@ -93,7 +93,7 @@ def setup_sheet_style(ws):
 # 核心功能：VLOOKUP 資料比對與自動帶入 + 著色
 # ==========================================
 target_date = st.text_input(
-    "排班日期 / Sheet 名稱 (如: 1022 或 1028)", value="1028", key="t_date"
+    "排班日期 / Sheet 名稱 (如: 1022 或 1031)", value="1031", key="t_date"
 )
 
 col1, col2 = st.columns(2)
@@ -131,7 +131,7 @@ if file_a and file_b:
           a_id_col
       )
 
-      # 剔除不需要的非排班欄位（含護持起始/迄止時間）
+      # 1. 剔除非排班核心欄位
       drop_cols = [
           "大隊別",
           "小隊別",
@@ -156,6 +156,20 @@ if file_a and file_b:
       df_b_cleaned = df_b.drop(
           columns=[c for c in drop_cols if c in df_b.columns]
       ).copy()
+
+      # 2. 自動清理表格 B 末端重複出現的「手機」與「防疫證書證號」多餘欄位
+      cols_to_keep = []
+      phone_seen = False
+      for col in df_b_cleaned.columns:
+        col_str = str(col).strip()
+        if col_str.startswith("手機") or col_str.startswith("防疫證書證號"):
+          if not phone_seen and col_str == "手機":
+            cols_to_keep.append(col)
+            phone_seen = True
+        else:
+          cols_to_keep.append(col)
+
+      df_b_cleaned = df_b_cleaned[cols_to_keep].copy()
 
       # VLOOKUP 帶入表格 A 核心欄位
       df_b_cleaned["館"] = (
@@ -261,7 +275,7 @@ if file_a and file_b:
           if "發心" in c_str and ("迄" in c_str or "止" in c_str or "終" in c_str):
             end_time_col_b = col_idx
 
-        # 1. 共乘色彩著色 (支援百人 32 種粉彩輪替)
+        # 1. 共乘色彩著色
         if car_col_b:
           car_series = (
               df_b_cleaned.iloc[:, car_col_b - 1]
