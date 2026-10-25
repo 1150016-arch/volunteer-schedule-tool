@@ -17,38 +17,10 @@ st.markdown(
 
 # 32 色精選柔和粉彩配色池 (專為百人大型排班設計，高對比度不刺眼)
 PASTEL_COLORS = [
-    "FFF2CC",
-    "D9EAD3",
-    "D0E0E3",
-    "F4CCCC",
-    "EFE5D9",
-    "E1D5E7",
-    "FFE599",
-    "B6D7A8",
-    "A2C4C9",
-    "F1C232",
-    "FCE5CD",
-    "D0E0E3",
-    "EAD1DC",
-    "D9D2E9",
-    "C9DAF8",
-    "FFF2CC",
-    "F9CB9C",
-    "EA9999",
-    "FFE599",
-    "B6D7A8",
-    "A2C4C9",
-    "9FC5E8",
-    "B4A7D6",
-    "D5A6BD",
-    "E06666",
-    "F6B26B",
-    "FFD966",
-    "93C47D",
-    "76A5AF",
-    "6FA8DC",
-    "8E7CC3",
-    "C27BA0",
+    "FFF2CC", "D9EAD3", "D0E0E3", "F4CCCC", "EFE5D9", "E1D5E7", "FFE599", "B6D7A8",
+    "A2C4C9", "F1C232", "FCE5CD", "D0E0E3", "EAD1DC", "D9D2E9", "C9DAF8", "FFF2CC",
+    "F9CB9C", "EA9999", "FFE599", "B6D7A8", "A2C4C9", "9FC5E8", "B4A7D6", "D5A6BD",
+    "E06666", "F6B26B", "FFD966", "93C47D", "76A5AF", "6FA8DC", "8E7CC3", "C27BA0",
 ]
 
 # 時間異常警告底色 (淺橘色)
@@ -58,14 +30,36 @@ TIME_ABNORMAL_FILL = PatternFill(
 
 
 def load_clean_b(file):
-    """讀取新版表格 B：自動辨識標題列位置（相容第一列與第二列標題）"""
-    df = pd.read_excel(file)
-    if "義工編號" not in df.columns and "編號" not in df.columns:
-        if len(df) > 0 and any(
-            df.iloc[0].astype(str).str.contains("義工編號|編號|姓名")
-        ):
-            df.columns = df.iloc[0]
-            df = df[1:].reset_index(drop=True)
+    """精準讀取表格 B：精確尋找包含『義工編號』或『姓名』的標題列，並精確處理重複手機欄位"""
+    df_raw = pd.read_excel(file, header=None)
+
+    # 尋找哪一列才是真正的標題列 (Header Row)
+    header_idx = None
+    for idx, row in df_raw.iterrows():
+        row_str = " ".join(row.dropna().astype(str))
+        if "義工編號" in row_str or "編號" in row_str or "姓名" in row_str:
+            header_idx = idx
+            break
+
+    if header_idx is not None:
+        # 設定正確的 Header
+        header = df_raw.iloc[header_idx].astype(str).str.strip().tolist()
+        df = df_raw.iloc[header_idx + 1 :].copy().reset_index(drop=True)
+
+        # 處理標題重複問題 (例如多個 "手機" 或 "上下車地點")
+        new_cols = []
+        counts = {}
+        for col in header:
+            if col in counts:
+                counts[col] += 1
+                new_cols.append(f"{col}_{counts[col]}")
+            else:
+                counts[col] = 1
+                new_cols.append(col)
+        df.columns = new_cols
+    else:
+        df = pd.read_excel(file)
+
     return df
 
 
@@ -93,7 +87,9 @@ def setup_sheet_style(ws):
 # 核心功能：VLOOKUP 資料比對與自動帶入 + 著色
 # ==========================================
 target_date = st.text_input(
-    "排班日期 / Sheet 名稱 (如: 1022 或 1028)", value="1028", key="t_date"
+    "排班日期 / Sheet 名稱 (如: 1022 或 1028 或 1031)",
+    value="1031",
+    key="t_date",
 )
 
 col1, col2 = st.columns(2)
@@ -115,15 +111,12 @@ if file_a and file_b:
             df_a = pd.read_excel(xls_a, sheet_name=target_date)
             df_b = load_clean_b(file_b)
 
-            a_id_col = (
-                "編號"
-                if "編號" in df_a.columns
-                else ("義工編號" if "義工編號" in df_a.columns else df_a.columns[1])
+            # 自動識別 ID 欄位
+            a_id_col = next(
+                (c for c in df_a.columns if "編號" in str(c)), df_a.columns[1]
             )
-            b_id_col = (
-                "義工編號"
-                if "義工編號" in df_b.columns
-                else ("編號" if "編號" in df_b.columns else df_b.columns[0])
+            b_id_col = next(
+                (c for c in df_b.columns if "編號" in str(c)), df_b.columns[0]
             )
 
             df_a_clean = df_a.dropna(subset=[a_id_col]).copy()
@@ -131,19 +124,53 @@ if file_a and file_b:
                 a_id_col
             )
 
-            # 剔除不需要的非排班欄位
+            # 剔除不需要的非排班欄位 (保留車次與對應的上下車地點、手機)
             drop_cols = [
-                "大隊別", "小隊別", "防疫證書證號", "任務", "地點", "檢定資格", "活動名稱", 
-                "護持起始時間", "護持迄止時間", "護持開始時間", "護持結束時間", 
-                "異動備註", "動態備註(表格B)", "備註2", "備註3", "備註4", "是否納保", 
-                "保險註記", "精舍確認"
+                "大隊別",
+                "小隊別",
+                "防疫證書證號",
+                "任務",
+                "地點",
+                "檢定資格",
+                "活動名稱",
+                "護持起始時間",
+                "護持迄止時間",
+                "護持開始時間",
+                "護持結束時間",
+                "異動備註",
+                "動態備註(表格B)",
+                "備註2",
+                "備註3",
+                "備註4",
+                "是否納保",
+                "保險註記",
+                "精舍確認",
             ]
-            df_b_cleaned = df_b.drop(columns=[c for c in drop_cols if c in df_b.columns]).copy()
 
-            # 【只保留第一個「手機」欄位，刪除後續所有重複的手機欄位】
-            phone_cols = [c for c in df_b_cleaned.columns if str(c).strip().startswith("手機")]
-            if len(phone_cols) > 1:
-                df_b_cleaned = df_b_cleaned.drop(columns=phone_cols[1:])
+            # 刪除無關欄位
+            cols_to_drop = [c for c in drop_cols if c in df_b.columns]
+            df_b_cleaned = df_b.drop(columns=cols_to_drop).copy()
+
+            # 【重點修復：手機欄位處理】
+            # 找出所有包含 "手機" 的欄位 (如 手機, 手機_2 等)
+            phone_cols = [
+                c for c in df_b_cleaned.columns if str(c).startswith("手機")
+            ]
+            if phone_cols:
+                # 確保第一個手機欄位有名稱 "手機"，且補全缺失資料 (若第一個為空則拿後續欄位補)
+                first_phone = phone_cols[0]
+                for extra_p in phone_cols[1:]:
+                    df_b_cleaned[first_phone] = df_b_cleaned[
+                        first_phone
+                    ].fillna(df_b_cleaned[extra_p])
+
+                # 重新命名第一個為 "手機"，並刪除多餘的手機欄位
+                df_b_cleaned = df_b_cleaned.rename(columns={first_phone: "手機"})
+                if len(phone_cols) > 1:
+                    extra_phones = [
+                        c for c in phone_cols[1:] if c in df_b_cleaned.columns
+                    ]
+                    df_b_cleaned = df_b_cleaned.drop(columns=extra_phones)
 
             # VLOOKUP 帶入表格 A 核心欄位
             df_b_cleaned["館"] = (
@@ -184,9 +211,9 @@ if file_a and file_b:
                 None,
             )
             if car_col_a:
-                df_b_cleaned["同館哨/親眷或共乘"] = df_b_cleaned[b_id_col].map(
-                    df_a_unique[car_col_a]
-                )
+                df_b_cleaned["同館哨/親眷或共乘"] = df_b_cleaned[
+                    b_id_col
+                ].map(df_a_unique[car_col_a])
 
             remark_col_a = next(
                 (
@@ -197,16 +224,18 @@ if file_a and file_b:
                 None,
             )
             if remark_col_a:
-                df_b_cleaned["常態備註(表格A)"] = df_b_cleaned[b_id_col].map(
-                    df_a_unique[remark_col_a]
-                )
+                df_b_cleaned["常態備註(表格A)"] = df_b_cleaned[
+                    b_id_col
+                ].map(df_a_unique[remark_col_a])
 
             # 調整欄位順序（放在精舍後方）
             base_cols = list(df_b_cleaned.columns)
             if "精舍" in base_cols:
                 idx = base_cols.index("精舍") + 1
                 add_cols = [
-                    c for c in ["館", "哨", "任", "特展", "仰懷宗範"] if c in base_cols
+                    c
+                    for c in ["館", "哨", "任", "特展", "仰懷宗範"]
+                    if c in base_cols
                 ]
                 for c in add_cols:
                     base_cols.remove(c)
@@ -215,19 +244,29 @@ if file_a and file_b:
 
             # 無發心時間者自動置底
             start_time_col_name = next(
-                (c for c in df_b_cleaned.columns if "發心" in str(c) and "起" in str(c)),
+                (
+                    c
+                    for c in df_b_cleaned.columns
+                    if "發心" in str(c) and "起" in str(c)
+                ),
                 None,
             )
             if start_time_col_name:
-                df_normal = df_b_cleaned[df_b_cleaned[start_time_col_name].notna()].copy()
+                df_normal = df_b_cleaned[
+                    df_b_cleaned[start_time_col_name].notna()
+                ].copy()
                 df_abnormal = df_b_cleaned[
                     df_b_cleaned[start_time_col_name].isna()
                 ].copy()
-                df_b_cleaned = pd.concat([df_normal, df_abnormal], ignore_index=True)
+                df_b_cleaned = pd.concat(
+                    [df_normal, df_abnormal], ignore_index=True
+                )
 
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine="openpyxl") as writer:
-                df_b_cleaned.to_excel(writer, sheet_name=target_date, index=False)
+                df_b_cleaned.to_excel(
+                    writer, sheet_name=target_date, index=False
+                )
                 ws = writer.sheets[target_date]
 
                 # ----------------------------------------
@@ -240,16 +279,23 @@ if file_a and file_b:
 
                 for col_idx, col_name in enumerate(df_b_cleaned.columns, 1):
                     c_str = str(col_name)
-                    if c_str in ["同館哨/親眷或共乘", "車牌號碼", "車牌", "車號"]:
+                    if c_str in [
+                        "同館哨/親眷或共乘",
+                        "車牌號碼",
+                        "車牌",
+                        "車號",
+                    ]:
                         car_col_b = col_idx
                     if c_str in ["姓名", "義工姓名"]:
                         name_col_b = col_idx
                     if "發心" in c_str and ("起" in c_str or "始" in c_str):
                         start_time_col_b = col_idx
-                    if "發心" in c_str and ("迄" in c_str or "止" in c_str or "終" in c_str):
+                    if "發心" in c_str and (
+                        "迄" in c_str or "止" in c_str or "終" in c_str
+                    ):
                         end_time_col_b = col_idx
 
-                # 1. 共乘色彩著色 (支援百人 32 種粉彩輪替)
+                # 1. 共乘色彩著色 (支援 32 種粉彩輪替)
                 if car_col_b:
                     car_series = (
                         df_b_cleaned.iloc[:, car_col_b - 1]
@@ -265,7 +311,9 @@ if file_a and file_b:
 
                     car_color_map = {}
                     for idx_c, car in enumerate(valid_cars):
-                        car_color_map[car] = PASTEL_COLORS[idx_c % len(PASTEL_COLORS)]
+                        car_color_map[car] = PASTEL_COLORS[
+                            idx_c % len(PASTEL_COLORS)
+                        ]
 
                     for row_idx, row in df_b_cleaned.iterrows():
                         c_val = (
@@ -276,12 +324,18 @@ if file_a and file_b:
                         if c_val in car_color_map:
                             color_hex = car_color_map[c_val]
                             fill = PatternFill(
-                                start_color=color_hex, end_color=color_hex, fill_type="solid"
+                                start_color=color_hex,
+                                end_color=color_hex,
+                                fill_type="solid",
                             )
                             excel_row = row_idx + 2
                             if name_col_b:
-                                ws.cell(row=excel_row, column=name_col_b).fill = fill
-                            ws.cell(row=excel_row, column=car_col_b).fill = fill
+                                ws.cell(
+                                    row=excel_row, column=name_col_b
+                                ).fill = fill
+                            ws.cell(
+                                row=excel_row, column=car_col_b
+                            ).fill = fill
 
                 # 2. 發心時間異常提醒 (橘底)
                 if start_time_col_b or end_time_col_b:
@@ -297,7 +351,10 @@ if file_a and file_b:
                         )
                         et_val = (
                             str(row.iloc[end_time_col_b - 1]).strip()
-                            if (end_time_col_b and pd.notna(row.iloc[end_time_col_b - 1]))
+                            if (
+                                end_time_col_b
+                                and pd.notna(row.iloc[end_time_col_b - 1])
+                            )
                             else ""
                         )
 
