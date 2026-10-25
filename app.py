@@ -140,8 +140,8 @@ if file_a and file_b:
             ]
             df_b_cleaned = df_b.drop(columns=[c for c in drop_cols if c in df_b.columns]).copy()
 
-            # 【徹底刪除所有重複的手機欄位】只保留第一個出現的「手機」，後續不論是 手機.1、手機.2 或是獨立出現的第二個 手機 欄位通通剔除
-            phone_cols = [c for c in df_b_cleaned.columns if str(c).startswith("手機")]
+            # 【只保留第一個「手機」欄位，刪除後續所有重複的手機欄位】
+            phone_cols = [c for c in df_b_cleaned.columns if str(c).strip().startswith("手機")]
             if len(phone_cols) > 1:
                 df_b_cleaned = df_b_cleaned.drop(columns=phone_cols[1:])
 
