@@ -131,32 +131,18 @@ if file_a and file_b:
           a_id_col
       )
 
-      # 剔除不需要的非排班欄位（含護持起始/迄止時間）
-      drop_cols = [
-          "大隊別",
-          "小隊別",
-          "防疫證書證號",
-          "任務",
-          "地點",
-          "檢定資格",
-          "活動名稱",
-          "護持起始時間",
-          "護持迄止時間",
-          "護持開始時間",
-          "護持結束時間",
-          "異動備註",
-          "動態備註(表格B)",
-          "備註2",
-          "備註3",
-          "備註4",
-          "是否納保",
-          "保險註記",
-          "精舍確認",
-      ]
-      df_b_cleaned = df_b.drop(
-          columns=[c for c in drop_cols if c in df_b.columns]
-      ).copy()
+    # 剔除不需要的非排班欄位
+drop_cols = [
+    "大隊別", "小隊別", "防疫證書證號", "任務", "地點", "檢定資格", "活動名稱", 
+    "護持起始時間", "護持迄止時間", "護持開始時間", "護持結束時間", 
+    "異動備註", "動態備註(表格B)", "備註2", "備註3", "備註4", "是否納保", 
+    "保險註記", "精舍確認"
+]
+df_b_cleaned = df_b.drop(columns=[c for c in drop_cols if c in df_b.columns]).copy()
 
+# 【只剔除重複的手機欄位】保留原本的第一個「手機」，自動刪除「手機.1」、「手機.2」等重複欄位
+dup_phone_cols = [c for c in df_b_cleaned.columns if str(c).startswith("手機.")]
+df_b_cleaned = df_b_cleaned.drop(columns=dup_phone_cols)
       # VLOOKUP 帶入表格 A 核心欄位
       df_b_cleaned["館"] = (
           df_b_cleaned[b_id_col].map(df_a_unique["館別"])
