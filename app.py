@@ -12,7 +12,7 @@ st.set_page_config(
 
 st.title("📅 義工排班資料自動比對系統")
 st.markdown(
-    "匯入雲端預排檔（表格 A）與登記發心名單（表格 B），自動進行 VLOOKUP 比對、剔除無用欄位，並**自動標註共乘色彩與時間異常提醒**。"
+    "匯入雲端預排檔（表格 A）與登記綜合名單（表格 B），自動進行 VLOOKUP 比對、剔除非核心欄位，並**自動標註共乘色彩與時間異常提醒**。"
 )
 
 # 柔和粉彩配色池 (供共乘/親眷標註)
@@ -35,8 +35,9 @@ TIME_ABNORMAL_FILL = PatternFill(
 
 
 def load_clean_b(file):
-  """讀取表格 B 並自動處理標題在第二列的問題"""
+  """讀取新版表格 B：自動辨識標題列位置（相容第一列與第二列標題）"""
   df = pd.read_excel(file)
+  # 若第一列並非標題（找不到義工編號），檢查第二列
   if "義工編號" not in df.columns and "編號" not in df.columns:
     if len(df) > 0 and any(
         df.iloc[0].astype(str).str.contains("義工編號|編號|姓名")
@@ -70,7 +71,7 @@ def setup_sheet_style(ws):
 # 核心功能：VLOOKUP 資料比對與自動帶入 + 著色
 # ==========================================
 target_date = st.text_input(
-    "排班日期 / Sheet 名稱 (如: 1022 或 1021)", value="1022", key="t_date"
+    "排班日期 / Sheet 名稱 (如: 1022 或 1025)", value="1022", key="t_date"
 )
 
 col1, col2 = st.columns(2)
@@ -80,7 +81,7 @@ with col1:
   )
 with col2:
   file_b = st.file_uploader(
-      "上傳表格 B (登記發心名單)", type=["xlsx", "xls"], key="f_b"
+      "上傳表格 B (登記綜合名單)", type=["xlsx", "xls"], key="f_b"
   )
 
 if file_a and file_b:
@@ -92,6 +93,7 @@ if file_a and file_b:
       df_a = pd.read_excel(xls_a, sheet_name=target_date)
       df_b = load_clean_b(file_b)
 
+      # 自動辨識 Key 欄位 (義工編號 / 編號)
       a_id_col = (
           "編號"
           if "編號" in df_a.columns
@@ -108,7 +110,7 @@ if file_a and file_b:
           a_id_col
       )
 
-      # 剔除非排班核心欄位
+      # 剔除不需要的非排班欄位
       drop_cols = [
           "大隊別",
           "小隊別",
@@ -188,7 +190,7 @@ if file_a and file_b:
             df_a_unique[remark_col_a]
         )
 
-      # 調整欄位順序（放在精舍後方）
+      # 調整欄位順序（把 VLOOKUP 出來的館、哨、任、特展、仰懷宗範，放在精舍後方）
       base_cols = list(df_b_cleaned.columns)
       if "精舍" in base_cols:
         idx = base_cols.index("精舍") + 1
@@ -201,10 +203,14 @@ if file_a and file_b:
         df_b_cleaned = df_b_cleaned[new_cols]
 
       # 無發心時間者自動置底
-      if "發心起始時間" in df_b_cleaned.columns:
-        df_normal = df_b_cleaned[df_b_cleaned["發心起始時間"].notna()].copy()
+      start_time_col_name = next(
+          (c for c in df_b_cleaned.columns if "發心" in str(c) and "起" in str(c)),
+          None,
+      )
+      if start_time_col_name:
+        df_normal = df_b_cleaned[df_b_cleaned[start_time_col_name].notna()].copy()
         df_abnormal = df_b_cleaned[
-            df_b_cleaned["發心起始時間"].isna()
+            df_b_cleaned[start_time_col_name].isna()
         ].copy()
         df_b_cleaned = pd.concat([df_normal, df_abnormal], ignore_index=True)
 
@@ -227,9 +233,9 @@ if file_a and file_b:
             car_col_b = col_idx
           if c_str in ["姓名", "義工姓名"]:
             name_col_b = col_idx
-          if c_str in ["發心起始時間", "發心開始時間"]:
+          if "發心" in c_str and ("起" in c_str or "始" in c_str):
             start_time_col_b = col_idx
-          if c_str in ["發心迄止時間", "發心結束時間", "發心截止時間"]:
+          if "發心" in c_str and ("迄" in c_str or "止" in c_str or "終" in c_str):
             end_time_col_b = col_idx
 
         # 1. 共乘色彩著色
